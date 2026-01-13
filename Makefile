@@ -34,7 +34,9 @@ BUILD_VERSION ?= main
 BUILD_USER ?= 
 BUILD_CHANNEL ?=
 # Use commas to separate multiple file systems, such as `hdfs,tos`
-FILE_SYSTEM ?= hdfs
+ENABLE_HDFS ?= True
+ENABLE_S3 ?= False
+USE_ARROW_HDFS ?= True
 ENABLE_ASAN ?= False
 LDB_BUILD ?= False
 ENABLE_COLOR ?= True
@@ -252,7 +254,9 @@ conan_build:
 	rm -f _build/${BUILD_TYPE}/CMakeCache.txt && \
 	echo ${BUILD_TYPE} > _build/.build_type && \
 	cd _build/${BUILD_TYPE} && \
-	echo "-o bolt/*:file_system=${FILE_SYSTEM} \
+	echo " -o bolt/*:enable_hdfs=${ENABLE_HDFS} \
+	-o bolt/*:use_arrow_hdfs=${USE_ARROW_HDFS} \
+	-o bolt/*:enable_s3=${ENABLE_S3} \
 	-o bolt/*:enable_asan=${ENABLE_ASAN} \
 	-o bolt/*:enable_perf=${ENABLE_PERF} \
 	-o bolt/*:enable_color=${ENABLE_COLOR} \

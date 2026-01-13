@@ -27,18 +27,19 @@
 
 
 add_library(bolt_hdfs RegisterHdfsFileSystem.cpp)
+  target_link_libraries(bolt_hdfs 
+    ${FOLLY_WITH_DEPENDENCIES} 
+    bolt_dwio_common
+    xsimd::xsimd
+    date::date)
 
-if(BOLT_ENABLE_HDFS)
+if(BOLT_USE_ARROW_HDFS)
   target_sources(bolt_hdfs PRIVATE HdfsFileSystem.cpp HdfsReadFile.cpp
                                     HdfsWriteFile.cpp StorageException.cpp)
 
   find_package(Arrow CONFIG REQUIRED)
   target_link_libraries(bolt_hdfs 
-    ${FOLLY_WITH_DEPENDENCIES} 
     bolt_external_hdfs
-    bolt_dwio_common
-    xsimd::xsimd
-    date::date
     arrow::arrow)
   
   if(${BOLT_BUILD_TESTING})

@@ -180,6 +180,7 @@ class BoltConan(ConanFile):
         # file system options
         "enable_hdfs": [True, False],
         "enable_s3": [True, False],
+        "use_arrow_hdfs": [True, False],
         "enable_asan": [True, False],
         "enable_jit": [True, False],
         "enable_color": [True, False],
@@ -212,6 +213,7 @@ class BoltConan(ConanFile):
         # file system options
         "enable_hdfs": True,
         "enable_s3": False,
+        "use_arrow_hdfs": True,
         "targets": None,
         "enable_arrow_connector": False,
         "enable_jit": True,
@@ -417,7 +419,6 @@ class BoltConan(ConanFile):
         self.options[arrow].with_openssl = True
         self.options[arrow].encryption = True
         self.options[arrow].with_thrift = True
-        self.options[arrow].with_hdfs = True
         self.options[arrow].dataset_modules = True
         self.options[arrow].substrait = True
         # substrait depends on protobuf
@@ -432,6 +433,10 @@ class BoltConan(ConanFile):
             self.options[arrow].with_flight_rpc = True
         self.options[arrow].with_test = True
         self.options[arrow].with_csv = True
+
+        if self.options.get_safe("enable_hdfs") and self.options.get_safe("use_arrow_hdfs"):
+            self.options[arrow].with_hdfs = True
+
         if self.options.get_safe("es_build"):
             self.options[arrow].with_pyarrow = False
         else:
@@ -605,9 +610,17 @@ class BoltConan(ConanFile):
             tc.cache_variables["BOLT_BUILD_TESTING_WITH_COVERAGE"] = "OFF"
             self.output.info("BOLT_BUILD_TESTING_WITH_COVERAGE is disabled")
 
-        tc.cache_variables["BOLT_ENABLE_HDFS"] = "OFF"
+        # hdfs file system, arrow implement as default
         if self.options.get_safe("enable_hdfs"):
             tc.cache_variables["BOLT_ENABLE_HDFS"] = "ON"
+            tc.cache_variables["BOLT_USE_ARROW_HDFS"] = "OFF"
+            if self.options.get_safe("use_arrow_hdfs"):
+                tc.cache_variables["BOLT_USE_ARROW_HDFS"] = "ON"
+        else:
+            tc.cache_variables["BOLT_ENABLE_HDFS"] = "OFF"
+            tc.cache_variables["BOLT_USE_ARROW_HDFS"] = "OFF"
+
+        tc.cache_variables["BOLT_ENABLE_S3"] = "OFF"
         if self.options.get_safe("enable_s3"):
             tc.cache_variables["BOLT_ENABLE_S3"] = "ON"
 
@@ -760,9 +773,10 @@ class BoltConan(ConanFile):
                 "liburing::liburing",
                 "zlib::zlib",
                 "libbacktrace::libbacktrace",
-                "aws-c-common::aws-c-common",
             ]
         )
+        if self.options.get_safe("enable_s3"):
+            self.cpp_info.requires.append("aws-c-common::aws-c-common")
 
     def _cmake_target_to_conan_pkgname(self, deps_list):
         if not isinstance(deps_list, list):
