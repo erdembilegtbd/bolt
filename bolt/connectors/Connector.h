@@ -378,12 +378,12 @@ class AsyncThreadCtx {
   }
 
   void in() {
-    std::unique_lock lock(mutex_);
+    std::scoped_lock lock(mutex_);
     numIn_++;
     cv_.notify_one();
   }
   void out() {
-    std::unique_lock lock(mutex_);
+    std::scoped_lock lock(mutex_);
     numIn_--;
     cv_.notify_one();
   }
@@ -401,12 +401,26 @@ class AsyncThreadCtx {
     return mutex_;
   }
 
-  int64_t& inPreloadingBytes() {
+  int64_t preloadBytesLimit() const {
+    return preloadBytesLimit_;
+  }
+
+  void addPreloadingBytes(int64_t bytes) {
+    std::scoped_lock lock(mutex_);
+    addPreloadingBytesUntracked(bytes);
+  }
+
+  int64_t inPreloadingBytes() const {
+    std::scoped_lock lock(mutex_);
+    return inPreloadingBytesUntracked();
+  }
+
+  int64_t inPreloadingBytesUntracked() const {
     return inPreloadingBytes_;
   }
 
-  int64_t preloadBytesLimit() const {
-    return preloadBytesLimit_;
+  void addPreloadingBytesUntracked(int64_t bytes) {
+    inPreloadingBytes_ += bytes;
   }
 
   void disallowPreload() {
@@ -417,11 +431,56 @@ class AsyncThreadCtx {
   }
 
   bool allowPreload() {
+    if (adaptive_ && allowPreload_.load()) {
+      std::scoped_lock lock(mutex_);
+      return inPreloadingBytes_ < preloadBytesLimit_;
+    }
     return allowPreload_.load();
   }
 
+  class Guard {
+   public:
+    Guard(AsyncThreadCtx* ctx, int64_t bytes = 0) : ctx_(ctx), bytes_(bytes) {
+      if (ctx_) {
+        ctx_->in();
+        ctx_->addPreloadingBytes(bytes_);
+      }
+    }
+
+    ~Guard() {
+      if (ctx_) {
+        ctx_->out();
+        ctx_->addPreloadingBytes(-bytes_);
+      }
+    }
+
+    Guard(const Guard&) = delete;
+    Guard& operator=(const Guard&) = delete;
+
+    Guard(Guard&& other) noexcept : ctx_(other.ctx_), bytes_(other.bytes_) {
+      other.ctx_ = nullptr;
+    }
+
+    Guard& operator=(Guard&& other) noexcept {
+      if (this != &other) {
+        if (ctx_) {
+          ctx_->out();
+          ctx_->addPreloadingBytes(-bytes_);
+        }
+        ctx_ = other.ctx_;
+        bytes_ = other.bytes_;
+        other.ctx_ = nullptr;
+      }
+      return *this;
+    }
+
+   private:
+    AsyncThreadCtx* ctx_;
+    int64_t bytes_;
+  };
+
  private:
-  std::mutex mutex_;
+  mutable std::mutex mutex_;
   int numIn_{0};
   int64_t inPreloadingBytes_{0};
   int64_t preloadBytesLimit_{0};

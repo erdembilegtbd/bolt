@@ -200,8 +200,7 @@ class DirectBufferedInput : public BufferedInput {
 
   void updatePreloadingBytes(int64_t bytes) {
     if (asyncThreadCtx_) {
-      std::lock_guard<std::mutex> lock(asyncThreadCtx_->getMutex());
-      asyncThreadCtx_->inPreloadingBytes() += bytes;
+      asyncThreadCtx_->addPreloadingBytes(bytes);
     }
   }
 
@@ -301,9 +300,24 @@ class DirectBufferedInput : public BufferedInput {
         connector::AsyncThreadCtx* asyncThreadCtx)
         : load(std::move(load)),
           prefetchMemoryPercent_(prefetchMemoryPercent),
-          asyncThreadCtx(asyncThreadCtx) {
+          asyncThreadCtx(asyncThreadCtx),
+          inGuard_(asyncThreadCtx) {
       BOLT_CHECK(asyncThreadCtx);
       preloadBytesLimit_ = asyncThreadCtx->preloadBytesLimit();
+    }
+
+    AsyncLoadHolder(const AsyncLoadHolder&) = delete;
+    AsyncLoadHolder& operator=(const AsyncLoadHolder&) = delete;
+
+    AsyncLoadHolder(AsyncLoadHolder&& other) noexcept
+        : load(std::move(other.load)),
+          prefetchMemoryPercent_(other.prefetchMemoryPercent_),
+          asyncThreadCtx(other.asyncThreadCtx),
+          preloadBytesLimit_(other.preloadBytesLimit_),
+          inGuard_(std::move(other.inGuard_)),
+          addedBytes_(other.addedBytes_) {
+      other.asyncThreadCtx = nullptr;
+      other.addedBytes_ = 0;
     }
 
     bool canPreload() const {
@@ -322,13 +336,15 @@ class DirectBufferedInput : public BufferedInput {
         // there are in preloading with high memory usage, sleep to avoid OOM
         {
           std::lock_guard<std::mutex> lock(asyncThreadCtx->getMutex());
-          auto& inPreloadingBytes = asyncThreadCtx->inPreloadingBytes();
           // must preserve memory for other part of scan, i.e decompressed data
-          if ((inPreloadingBytes + load->preloadBytes() <
+          if ((asyncThreadCtx->inPreloadingBytesUntracked() +
+                       load->preloadBytes() <
                    preloadBytesLimit_ * prefetchMemoryPercent_ / 100.0 &&
-               inPreloadingBytes + load->preloadBytes() + memoryBytes <
+               asyncThreadCtx->inPreloadingBytesUntracked() +
+                       load->preloadBytes() + memoryBytes <
                    preloadBytesLimit_ / 2)) {
-            inPreloadingBytes += load->preloadBytes();
+            asyncThreadCtx->addPreloadingBytesUntracked(load->preloadBytes());
+            addedBytes_ = load->preloadBytes();
             return true;
           }
         }
@@ -344,7 +360,7 @@ class DirectBufferedInput : public BufferedInput {
                        << " s, pool_.currentBytes(): " << memoryBytes
                        << " preloadBytesLimit: " << preloadBytesLimit_
                        << " inPreloadingBytes: "
-                       << asyncThreadCtx->inPreloadingBytes()
+                       << asyncThreadCtx->inPreloadingBytesUntracked()
                        << " preloadBytes: " << load->preloadBytes()
                        << " prefetchMemoryPercent: " << prefetchMemoryPercent_
                        << ", pls reduce preload IO threads or add memory";
@@ -360,8 +376,14 @@ class DirectBufferedInput : public BufferedInput {
     int32_t prefetchMemoryPercent_{30};
     connector::AsyncThreadCtx* asyncThreadCtx;
     uint64_t preloadBytesLimit_{0};
+    connector::AsyncThreadCtx::Guard inGuard_;
+
+    mutable int64_t addedBytes_{0};
 
     ~AsyncLoadHolder() {
+      if (asyncThreadCtx && addedBytes_ > 0) {
+        asyncThreadCtx->addPreloadingBytes(-addedBytes_);
+      }
       // Release the load reference before the memory pool reference.
       // This is to make sure the memory pool is not destroyed before we free
       // up the allocated buffers. This is to handle the case that the
