@@ -601,7 +601,13 @@ def parse_args():
         help="Specific files to process (space separated)",
     )
 
-    parser.add_argument("-j", "--jobs", type=int, help="Parallel jobs")
+    parser.add_argument(
+        "-j",
+        "--jobs",
+        type=int,
+        default=multiprocessing.cpu_count(),
+        help="Parallel jobs",
+    )
 
     parser.add_argument(
         "--clang-tidy-binary",
